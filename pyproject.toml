@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "anki-collection-diff"
+version = "0.1.0"
+description = "Compare on-disk Anki project snapshots with a live Anki collection."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "Elvis" }]
+dependencies = []
+
+[project.scripts]
+anki-collection-diff = "anki_collection_diff.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.uv]
+exclude-newer = "7 days"
