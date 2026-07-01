@@ -6,14 +6,9 @@ import sys
 from pathlib import Path
 
 from .ankiconnect import AnkiConnectClient, AnkiConnectError
-from .config import load_audit_config
-from .diff import (
-    DiffReport,
-    combine_reports,
-    compare_model_snapshots,
-    compare_note_snapshots,
-)
-from .snapshots import load_model_snapshot, load_note_snapshot
+from .apkg import ApkgError, inspect_apkg, load_apkg_snapshot
+from .deck_resolver import DeckResolutionError, resolve_deck_name
+from .diff import DiffReport, combine_reports, compare_collection_snapshots
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -21,7 +16,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return args.func(args)
-    except AnkiConnectError as exc:
+    except (AnkiConnectError, ApkgError, DeckResolutionError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
@@ -29,42 +24,28 @@ def main(argv: list[str] | None = None) -> int:
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="anki-collection-diff",
-        description="Compare on-disk Anki snapshots with a live Anki collection.",
+        description="Compare APKG files with a live Anki collection.",
     )
     parser.add_argument("--ankiconnect-url", default="http://127.0.0.1:8765")
     subparsers = parser.add_subparsers(required=True)
 
-    snapshot_model = subparsers.add_parser("snapshot-model")
-    snapshot_model.add_argument("--output-root", required=True, type=Path)
-    snapshot_model.add_argument("--model-name", required=True)
-    snapshot_model.add_argument("--deck-name")
-    snapshot_model.add_argument("--timestamp")
-    snapshot_model.set_defaults(func=_snapshot_model)
+    inspect_parser = subparsers.add_parser("inspect-apkg")
+    inspect_parser.add_argument("apkg", type=Path)
+    inspect_parser.add_argument("--format", choices=["text", "json"], default="text")
+    inspect_parser.set_defaults(func=_inspect_apkg)
 
-    snapshot_notes = subparsers.add_parser("snapshot-notes")
-    snapshot_notes.add_argument("--output-root", required=True, type=Path)
-    snapshot_notes.add_argument("--model-name", required=True)
-    snapshot_notes.add_argument("--deck-name", required=True)
-    snapshot_notes.add_argument("--timestamp")
-    snapshot_notes.add_argument("--label", default="snapshot")
-    snapshot_notes.set_defaults(func=_snapshot_notes)
-
-    diff_model = subparsers.add_parser("diff-model")
-    diff_model.add_argument("snapshot", type=Path)
-    diff_model.add_argument("--model-name", required=True)
-    diff_model.add_argument("--deck-name")
-    _add_output_args(diff_model)
-    diff_model.set_defaults(func=_diff_model)
-
-    diff_notes = subparsers.add_parser("diff-notes")
-    diff_notes.add_argument("snapshot", type=Path)
-    diff_notes.add_argument("--model-name", required=True)
-    diff_notes.add_argument("--deck-name")
-    diff_notes.add_argument("--query")
-    diff_notes.add_argument("--key-field", action="append", default=[])
-    diff_notes.add_argument("--field", action="append", default=[])
-    _add_output_args(diff_notes)
-    diff_notes.set_defaults(func=_diff_notes)
+    compare = subparsers.add_parser("compare-apkg")
+    compare.add_argument("apkg", type=Path)
+    compare.add_argument("--apkg-deck-name")
+    compare.add_argument("--deck-name")
+    compare.add_argument("--deck-env", default="ANKI_COLLECTION_DIFF_DECK")
+    compare.add_argument("--deck-agent", choices=["codex", "claude"])
+    compare.add_argument("--key-field", action="append", default=[])
+    compare.add_argument("--field", action="append", default=[])
+    compare.add_argument("--no-models", action="store_true")
+    compare.add_argument("--no-media", action="store_true")
+    _add_output_args(compare)
+    compare.set_defaults(func=_compare_apkg)
 
     audit = subparsers.add_parser("audit")
     audit.add_argument("--config", required=True, type=Path)
@@ -79,87 +60,110 @@ def _add_output_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--no-fail-on-diff", action="store_true")
 
 
-def _snapshot_model(args: argparse.Namespace) -> int:
-    client = AnkiConnectClient(args.ankiconnect_url)
-    out = client.export_model_snapshot(
-        output_root=args.output_root,
-        model_name=args.model_name,
-        deck_name=args.deck_name,
-        timestamp=args.timestamp,
-    )
-    print(out)
+def _inspect_apkg(args: argparse.Namespace) -> int:
+    summary = inspect_apkg(args.apkg)
+    if args.format == "json":
+        print(json.dumps(summary.to_json(), ensure_ascii=False, indent=2))
+        return 0
+
+    print(f"APKG: {summary.path}")
+    print(f"Notes: {summary.note_count}")
+    print(f"Cards: {summary.card_count}")
+    print(f"Media files: {summary.media_count}")
+    print("Decks:")
+    for name in summary.deck_names:
+        print(f"  - {name}")
+    print("Candidate live deck names:")
+    for name in summary.candidate_deck_names:
+        print(f"  - {name}")
+    print("Models:")
+    for name in summary.model_names:
+        print(f"  - {name}")
     return 0
 
 
-def _snapshot_notes(args: argparse.Namespace) -> int:
+def _compare_apkg(args: argparse.Namespace) -> int:
     client = AnkiConnectClient(args.ankiconnect_url)
-    out = client.export_note_snapshot(
-        output_root=args.output_root,
-        model_name=args.model_name,
-        deck_name=args.deck_name,
-        timestamp=args.timestamp,
-        label=args.label,
+    expected = load_apkg_snapshot(args.apkg, deck_name=args.apkg_deck_name)
+    live_deck = resolve_deck_name(
+        explicit_deck_name=args.deck_name,
+        env_var=args.deck_env,
+        agent=args.deck_agent,
+        apkg_candidates=tuple(expected.metadata.get("candidate_deck_names", ())),
+        live_deck_names=client.deck_names(),
     )
-    print(out)
-    return 0
-
-
-def _diff_model(args: argparse.Namespace) -> int:
-    client = AnkiConnectClient(args.ankiconnect_url)
-    expected = load_model_snapshot(args.snapshot)
-    actual = client.fetch_model_snapshot(args.model_name, args.deck_name)
-    report = compare_model_snapshots(expected, actual)
-    return _emit_report(report, args)
-
-
-def _diff_notes(args: argparse.Namespace) -> int:
-    client = AnkiConnectClient(args.ankiconnect_url)
-    expected = load_note_snapshot(args.snapshot)
-    actual = client.fetch_note_snapshot(
-        model_name=args.model_name,
-        deck_name=args.deck_name,
-        query=args.query,
-    )
-    report = compare_note_snapshots(
+    actual = client.fetch_deck_snapshot(live_deck, include_media=not args.no_media)
+    report = compare_collection_snapshots(
         expected,
         actual,
         key_fields=args.key_field,
         field_names=args.field,
+        compare_models=not args.no_models,
+        compare_media=not args.no_media,
     )
+    report.title = f"APKG vs live deck: {args.apkg.name}"
+    report.metadata["live_deck_name"] = live_deck
     return _emit_report(report, args)
 
 
 def _audit(args: argparse.Namespace) -> int:
-    config = load_audit_config(args.config)
-    client = AnkiConnectClient(config.ankiconnect_url)
+    config = _load_audit_config(args.config)
+    client = AnkiConnectClient(config["ankiconnect_url"])
     reports: list[DiffReport] = []
+    for target in config["targets"]:
+        expected = load_apkg_snapshot(
+            target["apkg"],
+            deck_name=target.get("apkg_deck_name"),
+        )
+        live_deck = resolve_deck_name(
+            explicit_deck_name=target.get("deck_name"),
+            env_var=target.get("deck_env", "ANKI_COLLECTION_DIFF_DECK"),
+            agent=target.get("deck_agent"),
+            apkg_candidates=tuple(expected.metadata.get("candidate_deck_names", ())),
+            live_deck_names=client.deck_names(),
+        )
+        actual = client.fetch_deck_snapshot(
+            live_deck,
+            include_media=not target.get("no_media", False),
+        )
+        report = compare_collection_snapshots(
+            expected,
+            actual,
+            key_fields=target.get("key_fields", ()),
+            field_names=target.get("fields", ()),
+            compare_models=not target.get("no_models", False),
+            compare_media=not target.get("no_media", False),
+        )
+        report.title = f"{target['name']}: {target['apkg'].name}"
+        report.metadata["live_deck_name"] = live_deck
+        reports.append(report)
 
-    for target in config.targets:
-        if target.model_snapshot:
-            expected_model = load_model_snapshot(target.model_snapshot)
-            actual_model = client.fetch_model_snapshot(target.model_name, target.deck_name)
-            model_report = compare_model_snapshots(expected_model, actual_model)
-            model_report.title = f"{target.name}: model"
-            reports.append(model_report)
-
-        if target.note_snapshot:
-            expected_notes = load_note_snapshot(target.note_snapshot)
-            actual_notes = client.fetch_note_snapshot(
-                model_name=target.model_name,
-                deck_name=target.deck_name,
-                query=target.query,
-            )
-            note_report = compare_note_snapshots(
-                expected_notes,
-                actual_notes,
-                key_fields=target.key_fields,
-                field_names=target.fields,
-            )
-            note_report.title = f"{target.name}: notes"
-            reports.append(note_report)
-
-    combined = combine_reports(f"Anki collection audit: {args.config}", reports)
+    combined = combine_reports(f"APKG audit: {args.config}", reports)
     return _emit_report(combined, args)
+
+
+def _load_audit_config(path: Path) -> dict[str, object]:
+    import tomllib
+
+    data = tomllib.loads(path.read_text())
+    base = path.parent
+    collection = data.get("collection", {})
+    targets = []
+    for item in data.get("targets", []):
+        target = dict(item)
+        target["apkg"] = _resolve_path(base, item["apkg"])
+        targets.append(target)
+    return {
+        "ankiconnect_url": collection.get("ankiconnect_url", "http://127.0.0.1:8765"),
+        "targets": targets,
+    }
+
+
+def _resolve_path(base: Path, value: str) -> Path:
+    path = Path(value)
+    if path.is_absolute():
+        return path
+    return (base / path).resolve()
 
 
 def _emit_report(report: DiffReport, args: argparse.Namespace) -> int:

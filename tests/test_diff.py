@@ -2,8 +2,18 @@ from __future__ import annotations
 
 import unittest
 
-from anki_collection_diff.diff import compare_model_snapshots, compare_note_snapshots
-from anki_collection_diff.snapshots import ModelSnapshot, NoteRecord, NoteSnapshot
+from anki_collection_diff.diff import (
+    compare_collection_snapshots,
+    compare_model_snapshots,
+    compare_note_snapshots,
+)
+from anki_collection_diff.snapshots import (
+    CardRecord,
+    CollectionSnapshot,
+    ModelSnapshot,
+    NoteRecord,
+    NoteSnapshot,
+)
 
 
 class DiffTests(unittest.TestCase):
@@ -106,6 +116,67 @@ class DiffTests(unittest.TestCase):
         )
 
         self.assertFalse(report.changed)
+
+    def test_collection_diff_uses_field_key_and_card_counts(self) -> None:
+        model = ModelSnapshot(
+            source="fixture",
+            metadata={},
+            model_name="Example",
+            fields=["slug", "name"],
+            templates={"Card 1": {"Front": "{{slug}}", "Back": "{{name}}"}},
+            css="",
+        )
+        expected = CollectionSnapshot(
+            source="apkg",
+            metadata={},
+            deck_names=("Deck",),
+            models={"Example": model},
+            notes=[
+                NoteRecord(
+                    note_id=1,
+                    guid="abc",
+                    model_name="Example",
+                    tags=(),
+                    fields={"slug": "one", "name": "Old"},
+                    card_ids=(10,),
+                )
+            ],
+            cards=[
+                CardRecord(
+                    card_id=10,
+                    note_id=1,
+                    deck_name="Deck",
+                    model_name="Example",
+                    template_ord=0,
+                    template_name="Card 1",
+                )
+            ],
+        )
+        actual = CollectionSnapshot(
+            source="live",
+            metadata={},
+            deck_names=("Deck",),
+            models={"Example": model},
+            notes=[
+                NoteRecord(
+                    note_id=99,
+                    model_name="Example",
+                    tags=(),
+                    fields={"slug": "one", "name": "New"},
+                    card_ids=(),
+                )
+            ],
+            cards=[],
+        )
+
+        report = compare_collection_snapshots(expected, actual, key_fields=("slug",))
+
+        self.assertTrue(report.changed)
+        self.assertIn("counts.cards", [difference.path for difference in report.differences])
+        self.assertIn(
+            "notes.Example | slug=one.fields.name",
+            [difference.path for difference in report.differences],
+        )
 
 
 if __name__ == "__main__":

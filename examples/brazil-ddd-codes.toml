@@ -1,0 +1,8 @@
+[collection]
+ankiconnect_url = "http://127.0.0.1:8765"
+
+[[targets]]
+name = "brazil-ddd-codes"
+apkg = "../../brazil-ddd-codes/out/brazil-ddd-codes.apkg"
+deck_name = "Brazilian DDD Codes"
+key_fields = ["ddd_code"]

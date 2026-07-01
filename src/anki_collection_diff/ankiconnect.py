@@ -7,7 +7,7 @@ from typing import Any
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
-from .snapshots import ModelSnapshot, NoteRecord, NoteSnapshot
+from .snapshots import CardRecord, CollectionSnapshot, ModelSnapshot, NoteRecord, NoteSnapshot
 from .util import dump_json, slugify, timestamp_for_path
 
 
@@ -39,6 +39,63 @@ class AnkiConnectClient:
         if body.get("error"):
             raise AnkiConnectError(f"AnkiConnect {action} failed: {body['error']}")
         return body["result"]
+
+    def deck_names(self) -> tuple[str, ...]:
+        return tuple(sorted(str(name) for name in self.invoke("deckNames")))
+
+    def fetch_deck_snapshot(
+        self,
+        deck_name: str,
+        *,
+        include_media: bool = True,
+    ) -> CollectionSnapshot:
+        version = self.invoke("version")
+        query = f'deck:"{_escape_query_value(deck_name)}"'
+        note_ids = list(self.invoke("findNotes", {"query": query}))
+        card_ids = list(self.invoke("findCards", {"query": query}))
+        notes_info = self._batched_invoke("notesInfo", "notes", note_ids)
+        cards_info = self._batched_invoke("cardsInfo", "cards", card_ids)
+
+        notes = [_note_record_from_info(note) for note in notes_info]
+        model_names = tuple(sorted({note.model_name for note in notes}))
+        models = {name: self.fetch_model_snapshot(name) for name in model_names}
+        cards = [_card_record_from_info(card, models) for card in cards_info]
+        media_names: tuple[str, ...] = ()
+        if include_media:
+            media_names = tuple(sorted(str(name) for name in self.invoke("getMediaFilesNames", {"pattern": "*"})))
+
+        return CollectionSnapshot(
+            source=f"live:{deck_name}",
+            metadata={
+                "exported_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                "ankiconnect_version": version,
+                "deck_name": deck_name,
+                "query": query,
+                "note_count": len(notes),
+                "card_count": len(cards),
+                "media_count": len(media_names),
+            },
+            deck_names=(deck_name,),
+            models=models,
+            notes=notes,
+            cards=cards,
+            media_names=media_names,
+        )
+
+    def _batched_invoke(
+        self,
+        action: str,
+        param_name: str,
+        values: list[int | str],
+        *,
+        batch_size: int = 250,
+    ) -> list[Any]:
+        results: list[Any] = []
+        for start in range(0, len(values), batch_size):
+            batch = values[start : start + batch_size]
+            if batch:
+                results.extend(self.invoke(action, {param_name: batch}))
+        return results
 
     def fetch_model_snapshot(self, model_name: str, deck_name: str | None = None) -> ModelSnapshot:
         version = self.invoke("version")
@@ -177,3 +234,46 @@ class AnkiConnectClient:
         dump_json(out_dir / "metadata.json", snapshot.metadata)
         dump_json(out_dir / "notes.json", [note.to_json() for note in snapshot.notes])
         return out_dir
+
+
+def _note_record_from_info(note: dict[str, Any]) -> NoteRecord:
+    return NoteRecord(
+        note_id=note["noteId"],
+        model_name=note["modelName"],
+        tags=tuple(note.get("tags", [])),
+        fields={
+            name: str(payload.get("value", ""))
+            for name, payload in note.get("fields", {}).items()
+        },
+        card_ids=tuple(note.get("cards", [])),
+    )
+
+
+def _card_record_from_info(
+    card: dict[str, Any],
+    models: dict[str, ModelSnapshot],
+) -> CardRecord:
+    model_name = str(card.get("modelName", ""))
+    template_ord = int(card.get("ord", -1))
+    template_name = _template_name(models.get(model_name), template_ord)
+    return CardRecord(
+        card_id=card.get("cardId", ""),
+        note_id=card.get("note", card.get("noteId", "")),
+        deck_name=str(card.get("deckName", "")),
+        model_name=model_name,
+        template_ord=template_ord,
+        template_name=template_name,
+    )
+
+
+def _template_name(model: ModelSnapshot | None, template_ord: int) -> str:
+    if not model or not model.raw_model:
+        return str(template_ord)
+    for template in model.raw_model.get("tmpls", []):
+        if int(template.get("ord", -1)) == template_ord:
+            return str(template.get("name", template_ord))
+    return str(template_ord)
+
+
+def _escape_query_value(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')

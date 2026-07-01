@@ -3,9 +3,10 @@ from __future__ import annotations
 import difflib
 import json
 from dataclasses import dataclass, field
+from collections import Counter
 from typing import Any, Iterable
 
-from .snapshots import ModelSnapshot, NoteRecord, NoteSnapshot
+from .snapshots import CollectionSnapshot, ModelSnapshot, NoteRecord, NoteSnapshot
 
 
 @dataclass(frozen=True)
@@ -250,6 +251,39 @@ def compare_note_snapshots(
     return report
 
 
+def compare_collection_snapshots(
+    expected: CollectionSnapshot,
+    actual: CollectionSnapshot,
+    *,
+    key_fields: Iterable[str] = (),
+    field_names: Iterable[str] = (),
+    compare_models: bool = True,
+    compare_media: bool = True,
+) -> DiffReport:
+    key_fields = tuple(key_fields)
+    field_names = tuple(field_names)
+    report = DiffReport(
+        title="APKG vs live deck diff",
+        expected_source=expected.source,
+        actual_source=actual.source,
+        metadata={
+            "expected_deck_names": expected.deck_names,
+            "actual_deck_names": actual.deck_names,
+            "key_fields": key_fields,
+            "field_names": field_names,
+        },
+    )
+
+    _compare_counts(report, expected, actual)
+    if compare_models:
+        _compare_collection_models(report, expected, actual)
+    _compare_collection_notes(report, expected, actual, key_fields, field_names)
+    _compare_card_counts(report, expected, actual)
+    if compare_media:
+        _compare_media(report, expected, actual)
+    return report
+
+
 def combine_reports(title: str, reports: Iterable[DiffReport]) -> DiffReport:
     reports = list(reports)
     combined = DiffReport(title=title, expected_source="disk", actual_source="live")
@@ -266,6 +300,213 @@ def combine_reports(title: str, reports: Iterable[DiffReport]) -> DiffReport:
             )
     combined.metadata["reports"] = [report.to_json() for report in reports]
     return combined
+
+
+def _compare_counts(
+    report: DiffReport,
+    expected: CollectionSnapshot,
+    actual: CollectionSnapshot,
+) -> None:
+    if len(expected.notes) != len(actual.notes):
+        report.differences.append(
+            Difference(
+                path="counts.notes",
+                summary="Note counts differ.",
+                expected=len(expected.notes),
+                actual=len(actual.notes),
+            )
+        )
+    if len(expected.cards) != len(actual.cards):
+        report.differences.append(
+            Difference(
+                path="counts.cards",
+                summary="Card counts differ.",
+                expected=len(expected.cards),
+                actual=len(actual.cards),
+            )
+        )
+
+
+def _compare_collection_models(
+    report: DiffReport,
+    expected: CollectionSnapshot,
+    actual: CollectionSnapshot,
+) -> None:
+    expected_names = set(expected.models)
+    actual_names = set(actual.models)
+    for name in sorted(expected_names - actual_names):
+        report.differences.append(
+            Difference(
+                path=f"models.{name}",
+                summary="Model exists in the APKG but not in the live deck.",
+                expected=name,
+                actual=None,
+            )
+        )
+    for name in sorted(actual_names - expected_names):
+        report.differences.append(
+            Difference(
+                path=f"models.{name}",
+                summary="Model exists in the live deck but not in the APKG.",
+                expected=None,
+                actual=name,
+            )
+        )
+    for name in sorted(expected_names & actual_names):
+        model_report = compare_model_snapshots(expected.models[name], actual.models[name])
+        for difference in model_report.differences:
+            report.differences.append(
+                Difference(
+                    path=f"models.{name}.{difference.path}",
+                    summary=difference.summary,
+                    expected=difference.expected,
+                    actual=difference.actual,
+                    diff=difference.diff,
+                )
+            )
+
+
+def _compare_collection_notes(
+    report: DiffReport,
+    expected: CollectionSnapshot,
+    actual: CollectionSnapshot,
+    key_fields: tuple[str, ...],
+    field_names: tuple[str, ...],
+) -> None:
+    expected_index, expected_duplicates = _index_collection_notes(expected, key_fields)
+    actual_index, actual_duplicates = _index_collection_notes(actual, key_fields)
+
+    for key, notes in sorted(expected_duplicates.items()):
+        report.differences.append(
+            Difference(
+                path=f"notes.{key}",
+                summary=f"APKG has {len(notes)} notes with the same comparison key.",
+                expected=[note.note_id for note in notes],
+                actual=None,
+            )
+        )
+    for key, notes in sorted(actual_duplicates.items()):
+        report.differences.append(
+            Difference(
+                path=f"notes.{key}",
+                summary=f"Live deck has {len(notes)} notes with the same comparison key.",
+                expected=None,
+                actual=[note.note_id for note in notes],
+            )
+        )
+
+    expected_keys = set(expected_index)
+    actual_keys = set(actual_index)
+    for key in sorted(expected_keys - actual_keys):
+        report.differences.append(
+            Difference(
+                path=f"notes.{key}",
+                summary="Note exists in the APKG but not in the live deck.",
+                expected=expected_index[key].to_json(),
+                actual=None,
+            )
+        )
+    for key in sorted(actual_keys - expected_keys):
+        report.differences.append(
+            Difference(
+                path=f"notes.{key}",
+                summary="Note exists in the live deck but not in the APKG.",
+                expected=None,
+                actual=actual_index[key].to_json(),
+            )
+        )
+
+    for key in sorted(expected_keys & actual_keys):
+        expected_note = expected_index[key]
+        actual_note = actual_index[key]
+        names = field_names or tuple(sorted(set(expected_note.fields) | set(actual_note.fields)))
+        for field_name in names:
+            expected_value = expected_note.fields.get(field_name, "")
+            actual_value = actual_note.fields.get(field_name, "")
+            if expected_value != actual_value:
+                report.differences.append(
+                    Difference(
+                        path=f"notes.{key}.fields.{field_name}",
+                        summary="Field value differs.",
+                        diff=_unified_text_diff(
+                            expected_value,
+                            actual_value,
+                            f"expected {field_name}",
+                            f"actual {field_name}",
+                        ),
+                    )
+                )
+
+
+def _compare_card_counts(
+    report: DiffReport,
+    expected: CollectionSnapshot,
+    actual: CollectionSnapshot,
+) -> None:
+    expected_counts = _card_counts(expected)
+    actual_counts = _card_counts(actual)
+    if expected_counts != actual_counts:
+        report.differences.append(
+            Difference(
+                path="cards.by_template",
+                summary="Card counts by model/template differ.",
+                expected=dict(sorted(expected_counts.items())),
+                actual=dict(sorted(actual_counts.items())),
+                diff=_unified_json_diff(
+                    dict(sorted(expected_counts.items())),
+                    dict(sorted(actual_counts.items())),
+                    "expected cards",
+                    "actual cards",
+                ),
+            )
+        )
+
+
+def _compare_media(
+    report: DiffReport,
+    expected: CollectionSnapshot,
+    actual: CollectionSnapshot,
+) -> None:
+    missing = sorted(set(expected.media_names) - set(actual.media_names))
+    if missing:
+        report.differences.append(
+            Difference(
+                path="media.missing",
+                summary="Media files are present in the APKG but missing from the live collection media folder.",
+                expected=missing,
+                actual=None,
+            )
+        )
+
+
+def _card_counts(snapshot: CollectionSnapshot) -> Counter[str]:
+    return Counter(f"{card.model_name}::{card.template_name}" for card in snapshot.cards)
+
+
+def _index_collection_notes(
+    snapshot: CollectionSnapshot,
+    key_fields: tuple[str, ...],
+) -> tuple[dict[str, NoteRecord], dict[str, list[NoteRecord]]]:
+    grouped: dict[str, list[NoteRecord]] = {}
+    for note in snapshot.notes:
+        grouped.setdefault(_collection_note_key(note, snapshot, key_fields), []).append(note)
+    unique = {key: values[0] for key, values in grouped.items() if len(values) == 1}
+    duplicates = {key: values for key, values in grouped.items() if len(values) > 1}
+    return unique, duplicates
+
+
+def _collection_note_key(
+    note: NoteRecord,
+    snapshot: CollectionSnapshot,
+    key_fields: tuple[str, ...],
+) -> str:
+    if key_fields:
+        return f"{note.model_name} | " + " | ".join(
+            f"{name}={note.fields.get(name, '')}" for name in key_fields
+        )
+    model = snapshot.models.get(note.model_name)
+    first_field = model.fields[0] if model and model.fields else next(iter(note.fields), "")
+    return f"{note.model_name} | {first_field}={note.fields.get(first_field, '')}"
 
 
 def _index_notes(

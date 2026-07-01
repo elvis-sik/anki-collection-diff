@@ -26,15 +26,19 @@ class NoteRecord:
     tags: tuple[str, ...]
     fields: dict[str, str]
     card_ids: tuple[int | str, ...]
+    guid: str | None = None
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        data = {
             "noteId": self.note_id,
             "modelName": self.model_name,
             "tags": list(self.tags),
             "fields": self.fields,
             "cardIds": list(self.card_ids),
         }
+        if self.guid is not None:
+            data["guid"] = self.guid
+        return data
 
 
 @dataclass(frozen=True)
@@ -42,6 +46,58 @@ class NoteSnapshot:
     source: str
     metadata: dict[str, Any]
     notes: list[NoteRecord]
+
+
+@dataclass(frozen=True)
+class CardRecord:
+    card_id: int | str
+    note_id: int | str
+    deck_name: str
+    model_name: str
+    template_ord: int
+    template_name: str
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "cardId": self.card_id,
+            "noteId": self.note_id,
+            "deckName": self.deck_name,
+            "modelName": self.model_name,
+            "templateOrd": self.template_ord,
+            "templateName": self.template_name,
+        }
+
+
+@dataclass(frozen=True)
+class CollectionSnapshot:
+    source: str
+    metadata: dict[str, Any]
+    deck_names: tuple[str, ...]
+    models: dict[str, ModelSnapshot]
+    notes: list[NoteRecord]
+    cards: list[CardRecord]
+    media_names: tuple[str, ...] = ()
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "source": self.source,
+            "metadata": self.metadata,
+            "deckNames": list(self.deck_names),
+            "models": {
+                name: {
+                    "source": model.source,
+                    "metadata": model.metadata,
+                    "modelName": model.model_name,
+                    "fields": model.fields,
+                    "templates": model.templates,
+                    "css": model.css,
+                }
+                for name, model in self.models.items()
+            },
+            "notes": [note.to_json() for note in self.notes],
+            "cards": [card.to_json() for card in self.cards],
+            "mediaNames": list(self.media_names),
+        }
 
 
 def load_model_snapshot(path: Path) -> ModelSnapshot:
@@ -80,6 +136,7 @@ def load_note_snapshot(path: Path) -> NoteSnapshot:
                 tags=tuple(raw.get("tags", [])),
                 fields={name: str(value) for name, value in raw.get("fields", {}).items()},
                 card_ids=tuple(raw.get("cardIds", raw.get("cards", []))),
+                guid=raw.get("guid"),
             )
         )
     return NoteSnapshot(source=str(path), metadata=dict(metadata), notes=notes)
