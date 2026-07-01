@@ -8,6 +8,7 @@ import zipfile
 from pathlib import Path
 
 from anki_collection_diff.apkg import inspect_apkg, load_apkg_snapshot
+from anki_collection_diff.deck_resolver import DeckResolutionError, resolve_deck_name
 
 
 class ApkgTests(unittest.TestCase):
@@ -36,6 +37,16 @@ class ApkgTests(unittest.TestCase):
             self.assertEqual(summary.candidate_deck_names, ("Example Deck",))
             self.assertEqual(summary.note_count, 1)
             self.assertEqual(summary.card_count, 1)
+
+    def test_resolver_rejects_unknown_explicit_deck(self) -> None:
+        with self.assertRaises(DeckResolutionError):
+            resolve_deck_name(
+                explicit_deck_name="Missing",
+                env_var=None,
+                agent=None,
+                apkg_candidates=("Example Deck",),
+                live_deck_names=("Example Deck",),
+            )
 
 
 def _write_fixture_apkg(path: Path) -> None:

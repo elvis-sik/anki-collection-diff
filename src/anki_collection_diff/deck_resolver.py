@@ -17,11 +17,17 @@ def resolve_deck_name(
     live_deck_names: tuple[str, ...],
 ) -> str:
     if explicit_deck_name:
+        if live_deck_names and explicit_deck_name not in set(live_deck_names):
+            raise DeckResolutionError(f"Explicit live deck was not found: {explicit_deck_name}")
         return explicit_deck_name
 
     if env_var:
         env_value = os.environ.get(env_var)
         if env_value:
+            if live_deck_names and env_value not in set(live_deck_names):
+                raise DeckResolutionError(
+                    f"Live deck from {env_var} was not found: {env_value}"
+                )
             return env_value
 
     exact = [name for name in apkg_candidates if name in set(live_deck_names)]

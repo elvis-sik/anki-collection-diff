@@ -501,9 +501,7 @@ def _collection_note_key(
     key_fields: tuple[str, ...],
 ) -> str:
     if key_fields:
-        return f"{note.model_name} | " + " | ".join(
-            f"{name}={note.fields.get(name, '')}" for name in key_fields
-        )
+        return " | ".join(f"{name}={note.fields.get(name, '')}" for name in key_fields)
     model = snapshot.models.get(note.model_name)
     first_field = model.fields[0] if model and model.fields else next(iter(note.fields), "")
     return f"{note.model_name} | {first_field}={note.fields.get(first_field, '')}"

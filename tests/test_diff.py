@@ -174,7 +174,7 @@ class DiffTests(unittest.TestCase):
         self.assertTrue(report.changed)
         self.assertIn("counts.cards", [difference.path for difference in report.differences])
         self.assertIn(
-            "notes.Example | slug=one.fields.name",
+            "notes.slug=one.fields.name",
             [difference.path for difference in report.differences],
         )
 
