@@ -49,6 +49,31 @@ Deck selection can come from:
   choose from APKG candidate deck names and live deck names
 - exact automatic match when the APKG has a single unambiguous deck candidate
 
+## Runtime Permissions
+
+APKG inspection is offline and only reads the package file.
+
+APKG-vs-live comparison requires:
+
+- Anki running locally
+- AnkiConnect installed and reachable at `http://127.0.0.1:8765`
+- permission for the process to open localhost HTTP connections
+
+When running from Codex Desktop or another sandboxed agent, filesystem access to
+the project may not imply network access to AnkiConnect. If localhost requests
+fail from Python with "Could not reach AnkiConnect" while `curl` or the Anki UI
+looks healthy, rerun the comparison with the agent's unsandboxed/escalated
+permission flow.
+
+The optional `--deck-agent codex` and `--deck-agent claude` modes shell out to
+the corresponding CLI. They do not require this package to know API keys, but
+the chosen CLI must already be installed, authenticated, and allowed to access
+its normal state directory and model service. For Codex CLI this commonly means
+access to `~/.codex`, session files, and the network. If the installed Codex CLI
+rejects a local `service_tier` config value, pass a CLI config override when you
+run Codex directly, or fix the user-level Codex config before using
+`--deck-agent codex`.
+
 For repeatable audits, put APKG targets in a TOML config:
 
 ```bash
