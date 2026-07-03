@@ -126,7 +126,7 @@ One-time PyPI setup:
 - Project name: `anki-collection-diff`
 - Owner: `elvis-sik`
 - Repository: `anki-collection-diff`
-- Workflow: `release.yml`
+- Workflow: `workflow.yml`
 - Environment: `pypi`
 
 Release checklist:
