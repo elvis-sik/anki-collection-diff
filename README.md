@@ -1,5 +1,7 @@
 # anki-collection-diff
 
+[![PyPI](https://img.shields.io/pypi/v/anki-collection-diff.svg)](https://pypi.org/project/anki-collection-diff/)
+
 `anki-collection-diff` compares APKG files on disk with the live Anki collection
 through AnkiConnect.
 
@@ -25,17 +27,23 @@ Anki.
 
 ## Quick Start
 
+Install from PyPI:
+
+```bash
+python -m pip install anki-collection-diff
+```
+
 Anki must be open with AnkiConnect enabled.
 
 ```bash
-python -m anki_collection_diff inspect-apkg ../brazil-ddd-codes/out/brazil-ddd-codes.apkg
+anki-collection-diff inspect-apkg ../brazil-ddd-codes/out/brazil-ddd-codes.apkg
 ```
 
 Then compare the APKG to the live deck. Pass a stable key field when note ids are
 not expected to match between the package and your collection:
 
 ```bash
-python -m anki_collection_diff compare-apkg \
+anki-collection-diff compare-apkg \
   ../brazil-ddd-codes/out/brazil-ddd-codes.apkg \
   --deck-name "Brazilian DDD Codes" \
   --key-field ddd_code
@@ -77,7 +85,7 @@ run Codex directly, or fix the user-level Codex config before using
 For repeatable audits, put APKG targets in a TOML config:
 
 ```bash
-python -m anki_collection_diff audit --config examples/brazil-ddd-codes.toml
+anki-collection-diff audit --config examples/brazil-ddd-codes.toml
 ```
 
 By default, diff commands exit with status `1` when differences are found so
@@ -106,3 +114,27 @@ This project is a diff library, not a deck authoring or sync framework.
 Write-back commands should live elsewhere until a repeated workflow proves they
 belong here. Project-specific source workflows, such as Markdown bidirectional
 sync or local AnkiConnect rollout snapshots, should remain in those projects.
+
+## Releasing
+
+Releases are published to PyPI by GitHub Actions when a version tag is pushed.
+The workflow uses PyPI Trusted Publishing, so there is no PyPI token in the
+repository.
+
+One-time PyPI setup:
+
+- Project name: `anki-collection-diff`
+- Owner: `elvis-sik`
+- Repository: `anki-collection-diff`
+- Workflow: `release.yml`
+- Environment: `pypi`
+
+Release checklist:
+
+```bash
+make check
+make build
+make twine-check
+git tag v0.1.0
+git push origin main v0.1.0
+```

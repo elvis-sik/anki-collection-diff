@@ -1,4 +1,4 @@
-"""Compare on-disk Anki snapshots with a live Anki collection."""
+"""Compare generated Anki APKG files with a live Anki collection."""
 
 from .ankiconnect import AnkiConnectClient, AnkiConnectError
 from .apkg import ApkgError, load_apkg_snapshot

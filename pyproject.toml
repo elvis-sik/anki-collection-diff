@@ -5,11 +5,27 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "anki-collection-diff"
 version = "0.1.0"
-description = "Compare on-disk Anki project snapshots with a live Anki collection."
+description = "Compare generated Anki APKG files with a live Anki collection."
 readme = "README.md"
 requires-python = ">=3.11"
-authors = [{ name = "Elvis" }]
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Elvis Sik" }]
+keywords = ["anki", "apkg", "ankiconnect", "diff", "audit"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Topic :: Software Development :: Quality Assurance",
+]
 dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/elvis-sik/anki-collection-diff"
+Repository = "https://github.com/elvis-sik/anki-collection-diff"
+Issues = "https://github.com/elvis-sik/anki-collection-diff/issues"
 
 [project.scripts]
 anki-collection-diff = "anki_collection_diff.cli:main"
@@ -18,4 +34,7 @@ anki-collection-diff = "anki_collection_diff.cli:main"
 where = ["src"]
 
 [tool.uv]
+exclude-newer = "7 days"
+
+[tool.uv.pip]
 exclude-newer = "7 days"

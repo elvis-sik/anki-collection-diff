@@ -1,0 +1,63 @@
+name: Release
+
+# Publishes to PyPI when a version tag is pushed, e.g. `git tag v0.1.0 && git push origin v0.1.0`.
+# Uses PyPI Trusted Publishing (OIDC) -- no API token / secret is stored. See the
+# "Releasing" section of the README for the one-time PyPI publisher setup.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Verify tag matches project version
+        run: |
+          VERSION="$(uv version --short 2>/dev/null || grep -m1 '^version' pyproject.toml | cut -d'"' -f2)"
+          TAG="${GITHUB_REF_NAME#v}"
+          echo "tag=$TAG project_version=$VERSION"
+          test "$VERSION" = "$TAG" || { echo "::error::tag '$TAG' does not match project version '$VERSION'"; exit 1; }
+
+      - name: Run tests
+        run: |
+          PYTHONPATH=src python -m compileall -q src tests
+          PYTHONPATH=src python -m unittest discover -s tests -v
+
+      - name: Build sdist and wheel
+        run: uv build
+
+      - name: Upload dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/anki-collection-diff
+    permissions:
+      id-token: write # required for Trusted Publishing (OIDC)
+    steps:
+      - name: Download dist
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
