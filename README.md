@@ -1,143 +1,118 @@
-# anki-collection-diff
+# Anki Collection Diff
 
 [![PyPI](https://img.shields.io/pypi/v/anki-collection-diff.svg)](https://pypi.org/project/anki-collection-diff/)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776ab)](https://pypi.org/project/anki-collection-diff/)
 [![Source on GitHub](https://img.shields.io/badge/source-GitHub-24292f)](https://github.com/elvis-sik/anki-collection-diff)
 [![License: MIT](https://img.shields.io/badge/license-MIT-16A34A)](LICENSE)
 
-`anki-collection-diff` compares APKG files on disk with the live Anki collection
-through AnkiConnect.
+Know what a generated `.apkg` would change before you replace the copy in your
+live Anki collection.
 
-It is meant for generated deck projects where the build output is an `.apkg`,
-and you want a cheap repeatable audit of what differs from the copy currently
-installed in Anki.
+`anki-collection-diff` compares an APKG on disk with one deck exposed through
+AnkiConnect. It is built for reproducible deck projects: build the package,
+inspect it, compare it to Anki, then decide whether a rollout is warranted.
 
-The library is intentionally cheap: it reads the package SQLite database and
-media manifest, fetches only the selected live deck through AnkiConnect, and
-reports structural differences. It does not render cards and it never writes to
-Anki.
+**Read-only by design.** APKG inspection stays offline. Live comparison reads
+from AnkiConnect and never edits your collection, note types, media, or sync
+state.
 
-## What It Can Compare
-
-- note and card counts
-- added and missing notes
-- note field values, keyed by stable fields
-- model field order and field names
-- card template fronts and backs
-- shared note-type CSS
-- card counts by model/template
-- APKG media files missing from the live collection media folder
-
-## Quick Start
-
-Install from PyPI:
+## Install
 
 ```bash
-python -m pip install anki-collection-diff
+uv tool install anki-collection-diff
+# or: python -m pip install anki-collection-diff
 ```
 
-Anki must be open with AnkiConnect enabled.
+For live comparisons, start Anki with AnkiConnect enabled. The default endpoint
+is `http://127.0.0.1:8765`.
+
+## The Fast Path
+
+First inspect the package without opening Anki:
 
 ```bash
-anki-collection-diff inspect-apkg ../brazil-ddd-codes/out/brazil-ddd-codes.apkg
+anki-collection-diff inspect-apkg out/my-deck.apkg
 ```
 
-Then compare the APKG to the live deck. Pass a stable key field when note ids are
-not expected to match between the package and your collection:
+Then compare it with the installed deck. A stable key field makes note matching
+reliable even when the APKG and collection do not share note IDs:
 
 ```bash
-anki-collection-diff compare-apkg \
-  ../brazil-ddd-codes/out/brazil-ddd-codes.apkg \
-  --deck-name "Brazilian DDD Codes" \
-  --key-field ddd_code
+anki-collection-diff compare-apkg out/my-deck.apkg \
+  --deck-name "My Deck" \
+  --key-field slug
 ```
 
-Deck selection can come from:
+The report is Markdown by default, so it works well in a terminal, CI log, or
+release review. It exits `1` when differences exist and `0` when the snapshots
+match. Add `--no-fail-on-diff` when you are exploring rather than gating a
+workflow.
 
-- `--deck-name`
-- `ANKI_COLLECTION_DIFF_DECK`, or a custom `--deck-env`
-- `--deck-agent codex` or `--deck-agent claude`, which asks the installed CLI to
-  choose from APKG candidate deck names and live deck names
-- exact automatic match when the APKG has a single unambiguous deck candidate
+## What It Checks
 
-## Runtime Permissions
+| Surface | Examples |
+| --- | --- |
+| Deck contents | note and card counts; added and missing notes; selected field values |
+| Note types | field order and names; card-template fronts and backs; shared CSS |
+| Media | files present in the APKG but missing from the live collection |
+| Structure | card counts by model/template and APKG deck candidates |
 
-APKG inspection is offline and only reads the package file.
+Use `--field FieldName` to limit field comparison, `--no-models` to skip note
+type checks, or `--no-media` when media is outside the change under review.
 
-APKG-vs-live comparison requires:
+## Repeatable Audits
 
-- Anki running locally
-- AnkiConnect installed and reachable at `http://127.0.0.1:8765`
-- permission for the process to open localhost HTTP connections
+Keep a public-safe TOML target file next to a deck project:
 
-When running from Codex Desktop or another sandboxed agent, filesystem access to
-the project may not imply network access to AnkiConnect. If localhost requests
-fail from Python with "Could not reach AnkiConnect" while `curl` or the Anki UI
-looks healthy, rerun the comparison with the agent's unsandboxed/escalated
-permission flow.
+```toml
+[collection]
+ankiconnect_url = "http://127.0.0.1:8765"
 
-The optional `--deck-agent codex` and `--deck-agent claude` modes shell out to
-the corresponding CLI. They do not require this package to know API keys, but
-the chosen CLI must already be installed, authenticated, and allowed to access
-its normal state directory and model service. For Codex CLI this commonly means
-access to `~/.codex`, session files, and the network. If the installed Codex CLI
-rejects a local `service_tier` config value, pass a CLI config override when you
-run Codex directly, or fix the user-level Codex config before using
-`--deck-agent codex`.
+[[targets]]
+name = "my-deck"
+apkg = "out/my-deck.apkg"
+deck_name = "My Deck"
+key_fields = ["slug"]
+```
 
-For repeatable audits, put APKG targets in a TOML config:
+Run the whole audit with:
 
 ```bash
-anki-collection-diff audit --config examples/brazil-ddd-codes.toml
+anki-collection-diff audit --config release/audit.toml
 ```
 
-By default, diff commands exit with status `1` when differences are found so
-they can be used in scripts. Add `--no-fail-on-diff` for exploratory runs.
+See [`examples/brazil-ddd-codes.toml`](examples/brazil-ddd-codes.toml) for a
+working example.
 
-## Library Use
+## Deck Selection
 
-```python
-from pathlib import Path
+`compare-apkg` accepts `--deck-name` directly. It can also read a deck name
+from `ANKI_COLLECTION_DIFF_DECK` (or a custom `--deck-env`), or automatically
+use the single unambiguous APKG candidate. The optional `--deck-agent codex`
+and `--deck-agent claude` modes ask an already-installed agent CLI to resolve an
+ambiguous name; they are not required for ordinary use.
 
-from anki_collection_diff.ankiconnect import AnkiConnectClient
-from anki_collection_diff.apkg import load_apkg_snapshot
-from anki_collection_diff.diff import compare_collection_snapshots
+## Boundaries
 
-client = AnkiConnectClient()
-apkg = load_apkg_snapshot(Path("out/my-deck.apkg"))
-live = client.fetch_deck_snapshot("My Deck")
-report = compare_collection_snapshots(apkg, live, key_fields=("slug",))
+This is a diff and audit tool, not a deck authoring, import, or sync framework.
+It deliberately does not write to Anki. Use it before a separate, intentional
+rollout step.
 
-print(report.to_markdown())
-```
+When an agent sandbox blocks localhost access, rerun the comparison with that
+agent's normal local-network or escalated permission path. The package still
+does not gain write access to Anki.
 
-## Design Boundary
-
-This project is a diff library, not a deck authoring or sync framework.
-Write-back commands should live elsewhere until a repeated workflow proves they
-belong here. Project-specific source workflows, such as Markdown bidirectional
-sync or local AnkiConnect rollout snapshots, should remain in those projects.
-
-## Releasing
-
-Releases are published to PyPI by GitHub Actions when a version tag is pushed.
-The workflow uses PyPI Trusted Publishing, so there is no PyPI token in the
-repository.
-
-One-time PyPI setup:
-
-- Project name: `anki-collection-diff`
-- Owner: `elvis-sik`
-- Repository: `anki-collection-diff`
-- Workflow: `workflow.yml`
-- Environment: `pypi`
-
-Release checklist:
+## Development
 
 ```bash
 make check
 make build
 make twine-check
-git tag v0.1.0
-git push origin main v0.1.0
 ```
+
+PyPI releases use GitHub Actions Trusted Publishing; the repository contains no
+PyPI token.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
