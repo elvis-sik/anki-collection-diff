@@ -23,9 +23,9 @@ classifiers = [
 dependencies = []
 
 [project.urls]
-Homepage = "https://github.com/elvis-sik/anki-collection-diff"
-Repository = "https://github.com/elvis-sik/anki-collection-diff"
-Issues = "https://github.com/elvis-sik/anki-collection-diff/issues"
+Homepage = "https://github.com/ritornello-labs/anki-collection-diff"
+Repository = "https://github.com/ritornello-labs/anki-collection-diff"
+Issues = "https://github.com/ritornello-labs/anki-collection-diff/issues"
 
 [project.scripts]
 anki-collection-diff = "anki_collection_diff.cli:main"
